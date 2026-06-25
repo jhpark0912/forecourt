@@ -67,66 +67,92 @@ Spring Boot + Postgres + 스케줄러(매일 증분) + 알림 감지. 도메인 
 
 ## 6. 추천 구조 (Recommended Approach)
 
-**Approach B + 토폴로지 1 (사용자 환경 맞춤)**
+**서버리스 토폴로지 (3자 대면 검토로 확정, 2026-06-25)**
 
-선택 근거: 사용자가 **유지보수성**과 **Java/Spring 환경 유지**에 일관되게 무게를 둠.
-GitHub Actions 수집기(토폴로지 2)는 인프라는 더 가볍지만 익숙지 않은 스크립트 언어로 가야 해
-*사용자 기준* 유지보수가 나빠짐. "유지보수성"은 절대값이 아니라 누구 기준이냐의 문제.
+> 초기엔 "Spring on Fly/Railway(토폴로지 1)"였으나, 검토 결과 **상주 백엔드 서버를 두지 않는 구조**로 전환.
+> 결정적 통찰: 이 도구는 **수집기(배치 job)** 와 **뷰어(화면)** 둘로 분리되며, 둘 다 *상주 서버가 필요 없다.*
+> 수집기는 스케줄 job(GitHub Actions)이고, 뷰어는 정적 프론트가 Supabase를 직접 읽는다(PostgREST).
+> Fly/Railway는 2024년 무료 티어 폐지로 더는 무료도 아님 → 상주 서버 회피가 비용·운영 양면에서 정답.
 
-### 스택
-- **백엔드:** Spring Boot + JPA (수집·분석·조회 전부 Java, `@Scheduled`로 매일 증분 수집)
-- **DB:** **Supabase** (관리형 Postgres + 배터리). 상세 활용은 아래 §6.3.
-  - **핵심: Supabase도 결국 표준 Postgres.** Spring은 JDBC로 그냥 붙고(JPA/Hibernate Postgres dialect), `pg_dump`로 언제든 RDS/Neon/docker-compose로 이전 → 락인 없음.
-  - 데이터 규모(수십 MB)는 무료 티어 500MB에 한참 못 미침.
-- **백엔드 호스팅:** Fly.io / Railway 무료 (idle 시 잠듦, 개인용 무해)
-- **프론트:** Vercel(Next/정적) 또는 Spring 서버사이드로 통합 — UI 양에 따라 결정
+### 스택 (서버 0개)
+```
+[GitHub Actions cron]──매일──▶ Java 수집기(JAR)         [정적 프론트] 📱폰
+  (무료 스케줄러)               · 국토부 API(UA헤더)        Vercel/Cloudflare Pages
+                                · aptSeq 매칭·평단가 정규화   (무료·CDN·항상 켜짐)
+                                · 지표 미리 계산                   │ 직접 읽기/쓰기(HTTPS)
+                                      │ upsert                     │ + Google 로그인
+                                      ▼                            ▼
+                              [Supabase] 거래이력·지표뷰·Auth·RLS·Storage
+                                ▲ 백필 1회(로컬 또는 Actions 수동 트리거)
+```
+- **수집기(Java):** 국토부 수집·`aptSeq` 매칭·평단가 정규화·지표 계산. **상주 아님 — 배치 JAR.** 무거운 로직은 전부 여기(=Java가 빛나는 곳).
+  - 증분: **GitHub Actions cron**(무료, 언어무관, idle-sleep 문제 원천 제거).
+  - 백필(3~5년, 등록 시 1회): 로컬에서 JAR 1회 실행 또는 Actions `workflow_dispatch` 수동 트리거. 과거는 안 변하므로 재실행 없음.
+- **DB+읽기API:** **Supabase** Postgres + **PostgREST 자동 API** + RLS + Auth + Storage. 상세 §6.3.
+  - 표준 Postgres라 `pg_dump`로 언제든 이전 → 락인 없음. 데이터 수십 MB ≪ 무료 500MB.
+- **뷰어(프론트):** 정적 SPA가 **Supabase를 직접 읽기/쓰기**(서버 경유 없음). Vercel/Cloudflare Pages 무료. 콜드스타트·슬립 없음 → 폰에서 즉시.
+- **상주 백엔드 서버: 없음.** (나중에 Java 쿼리 API가 정말 필요해지면 그때 Render/Cloud Run에 얹음 — 지금 불필요.)
 
-### 도메인 구조 (사용자 컨벤션: domain/ vs global/ vs api/)
-- `domain/collector` — 국토부 API 수집·백필·증분 (수집 로직)
-- `domain/market` — 평단가 정규화·변동률·신고가 판정 (분석 로직)
-- `domain/watchlist` — 관심단지 등록·관리
-- `api/` — 프론트용 조회 컨트롤러 (워치리스트/비교/추이)
-- `global/` — 설정·예외·API 클라이언트 공통
+### 도메인 구조
+- **Java 수집기 프로젝트** (`domain/` vs `global/`):
+  - `domain/collector` — 국토부 API 수집·백필·증분
+  - `domain/market` — 평단가 정규화·변동률·신고가 판정 → 지표를 Supabase에 미리 계산·적재
+  - `global/` — 설정·예외·국토부 API 클라이언트 공통
+  - ※ 기존 `domain/watchlist`·`api/`는 Java에서 빠짐 → 워치리스트·조회는 Supabase 테이블+RLS+프론트가 담당.
+- **정적 프론트 프로젝트** (별도): 로그인·워치리스트·비교·차트·메모·사진 UI.
 
 ### 6.3 Supabase 활용방안
 
-원칙: **Supabase는 "Postgres + 필요한 배터리만" 골라 쓴다.** 분석·매칭 등 핵심 로직은 Spring에 둔다
-(유지보수 일관성 — 사용자 선호). Supabase에 비즈니스 로직을 과하게 밀어넣지 않는다.
+원칙: **무거운 로직(수집·`aptSeq` 매칭·평단가 정규화)은 Java 수집기에, 단순 집계는 Postgres 뷰에.**
+뷰어는 서버 없이 Supabase를 직접 읽으므로, Supabase 배터리(Auth·RLS·Storage)가 보안·기능의 핵심이 된다.
 
-**A. DB로서 (필수, 기본)**
-- Spring Boot ↔ Supabase Postgres를 **JDBC로 연결**. 별도 SDK 불필요, 그냥 커넥션 문자열만 바꾸면 됨.
-- 연결 방식 두 가지:
-  - **Direct (5432):** 상주 백엔드(Spring/HikariCP)는 이걸로. 커넥션 풀을 앱이 직접 관리.
-  - **Transaction Pooler (6543, pgbouncer):** 서버리스·짧은 함수에서 붙을 때. (Edge Function 등)
-- 마이그레이션은 Flyway/Liquibase로 Spring에서 관리 → 스키마 버전 관리 유지.
+**A. DB + 읽기 API (필수, 기본)**
+- **Java 수집기 ↔ Supabase**: JDBC(Direct 5432, HikariCP)로 연결해 적재. 마이그레이션은 Flyway로 관리.
+- **프론트 ↔ Supabase**: **PostgREST 자동 REST API**로 직접 읽기/쓰기. 별도 조회 서버 불필요.
+- 단순 분석(평균 평단가·변동률·신고가)은 **Postgres 뷰/RPC**로 → 프론트는 `SELECT`만. (과설계 회피, SQL이 적합한 영역)
 
-**B. 선택적으로 켤 배터리 (가치 있을 때만)**
-- **Auth** — 단일 사용자 로그인을 직접 안 만들고 Supabase Auth(이메일/소셜)로 해결. 관심단지는 '내 데이터'라
-  Row Level Security(RLS)로 사용자별 격리. → 로그인·보안 코드 절약.
-- **Realtime** — 실거래 적재 시 테이블 변경을 프론트가 구독 → 신고가 하이라이트를 폴링 없이 실시간 갱신.
-  단 MVP는 "접속 시 계산"으로 충분 → **후순위**.
-- **Database Webhooks / pg_cron** — 적재 후 신고가 감지 트리거 → 텔레그램 호출. **알림 단계에서 활용**.
-- **안 씀:** Storage(저장할 파일 없음).
+**B. 채택한 배터리 (다중유저·메모·사진으로 채택 확정)**
+- **Auth (채택)** — **Google OAuth** 1순위(이메일 매직링크는 보조). 발급 JWT의 `auth.uid()`가 RLS에 직접 물림.
+  - ※ **사적 데이터(메모·사진·워치리스트)를 정적 프론트가 직접 다루는 순간 Auth+RLS는 보안 강제 요건** — 유저 1명이어도 필수(public anon 키 노출 구조이므로). 다중유저는 여기에 거의 공짜로 따라옴.
+- **RLS (채택, 필수)** — 데이터를 **공용 vs 개인** 두 구역으로 분리(§7 참조).
+  - 공용(거래이력·지표뷰): 모두 읽기전용. / 개인(watchlist·notes·photos): `user_id = auth.uid()`로 격리.
+- **Storage (채택)** — 유저 **사진 첨부**용 버킷. RLS로 소유자 격리. 무료 1GB(사진 수백 장). (기존 "안 씀" → 쓸 이유 생김.)
+- **Realtime (후순위)** — 신고가 하이라이트 실시간 갱신. MVP는 "접속 시 계산"으로 충분.
 
-**C. 스케줄러 — Supabase가 빛나는 지점**
-- 함정: Fly/Railway 무료 백엔드는 idle 시 잠들어 **Spring `@Scheduled`가 안 돈다.** 매일 증분 수집이 멈춤.
-- 해법 두 가지:
-  - (a) 외부 cron(cron-job.org)이 수집 엔드포인트를 호출해 백엔드를 깨움 — 단순.
-  - (b) **Supabase pg_cron + Edge Function**이 매일 수집을 트리거 — DB 안에서 스케줄이 돌아 상주 서버 의존 제거.
-- → Supabase를 쓰는 이상 (b)가 자연스러운 선택지. 수집 로직 본체는 Spring 엔드포인트에 두고, pg_cron이 그걸 호출하는 형태도 가능.
+**C. 스케줄러 — GitHub Actions cron**
+- 증분 수집은 **GitHub Actions cron이 Java JAR을 매일 실행** → Supabase에 upsert. 무료·언어무관.
+- 상주 백엔드가 없으니 "idle-sleep으로 `@Scheduled`가 안 돈다"는 문제 자체가 사라짐(서버가 없으므로).
+- (대안: Supabase pg_cron + Edge Function. 하지만 수집 본체가 Java라 Actions가 더 자연스러움.)
 
 **D. 무료 티어 함정 (반드시 인지)**
-- Supabase 무료 프로젝트는 **7일간 활동 없으면 자동 일시정지(pause)**. (Neon의 scale-to-zero와 다른 점 — 깨우는 데 수동/지연 발생 가능.)
-- 완화: 위 (b) pg_cron이 매일 돌면 자연히 활성 유지되어 일시정지 안 걸림. 즉 스케줄러가 keep-alive 역할도 겸함.
+- Supabase 무료 프로젝트는 **7일간 활동 없으면 자동 일시정지(pause)**.
+- 완화: 매일 도는 Actions 증분 수집이 DB에 쓰므로 자연히 활성 유지 → 일시정지 안 걸림(keep-alive 겸).
 - DB 백업도 무료 티어는 제한적 → 중요해지면 주기적 `pg_dump`를 별도로.
 
-## 7. 화면 (UI — 3종이 80%)
+## 7. 화면 (UI) 및 데이터 구역
 
+### 핵심 3종 (가치의 80%)
 1. **워치리스트** — 내 관심단지 카드/리스트. 평당가·최근 변동률·신고가 여부 하이라이트.
 2. **비교 테이블** — 선택 단지들을 평당가/기간 변동률로 나란히. 정렬 가능.
 3. **변동추이 차트** — 단지별 3/6/12개월 실거래 추세 라인.
+
+### 다중유저·개인기록 (스코프 확장 — 채택)
+4. **로그인** — **Google OAuth**(Supabase Auth). 로그인 후 개인 데이터 접근.
+5. **단지별 메모** — 유저가 단지에 사적 기록 작성(`user_notes`). "내 앞마당"의 차별점.
+6. **사진 첨부** — 메모에 현장 사진 첨부(Supabase Storage).
 - 보조: 단지 검색(워치리스트에 담기 위한 것).
-- 상태 처리: 로딩 / 빈 워치리스트 / 데이터 없음(거래 희소 단지) / 수집 실패.
+- 상태 처리: 로딩 / 비로그인 / 빈 워치리스트 / 데이터 없음(거래 희소) / 수집 실패.
+- **보류(투기 영역):** 유저간 공유·댓글·피드 등 소셜 기능 → 수요 증명 후.
+
+### 데이터 구역 — 공용 vs 개인 (RLS 설계의 축)
+```
+[공용 — 모든 유저 읽기전용]            [개인 — RLS로 격리, auth.uid() 기준]
+· 거래 이력 (수집기 적재)               · watchlist   (내 관심단지, user_id)
+· 지표 뷰 (평단가/변동률/신고가)         · user_notes  (내 메모, user_id)
+  → 공개 정부 데이터라 공유                · note_photos (Storage 경로, user_id)
+                                          → 남의 것 못 봄/못 씀
+```
+무거운 실거래가는 **한 번 수집해 공유**, 유저는 그 위에 **자기 메모·사진만** 얹는다 → 데이터 가볍고 컨셉에 부합.
 
 ## 8. 관심단지 등록 — 주소→법정동코드 해석 (지도 활용)
 
@@ -183,18 +209,32 @@ Watchlist 단지 = {
 - 조회는 내 DB에서 나오므로 체감 즉시 (국토부 API 직접 호출 대비 빠름).
 
 ## 10. 배포/유통 (Distribution)
-- 개인용 웹앱. 백엔드는 Fly.io/Railway 무료, DB는 **Supabase** 무료, 프론트는 Vercel.
-- CI/CD: GitHub → 호스팅 자동 배포(추후). MVP는 수동 배포로 시작 가능.
+- **상주 서버 0개.** 수집기=GitHub Actions(무료), DB+Auth+Storage=Supabase(무료), 프론트=Vercel/Cloudflare Pages(무료).
+- 폰 원격 접근: 정적 프론트가 CDN에 항상 떠 있어 즉시 접근(콜드스타트·슬립 없음).
+- CI/CD: GitHub Actions가 수집(cron)·프론트 배포 모두 담당. MVP는 수동 배포로 시작 가능.
+
+### 빌드 순서 (스코프는 키우되 한 번에 다 짓지 않기)
+```
+1. 인사이트 루프   공용 실거래 데이터 → 워치리스트·비교·차트     ← 가치 먼저
+2. Auth + RLS      Google 로그인 + 사적 데이터 보안 바닥        ← 메모 전 필수
+3. 개인 메모        단지별 내 기록 (user_notes)                ← 차별점
+4. 사진 첨부        Storage                                    ← 현장감
+   └ 다중유저는 2번 시점에 자동으로 됨. 소셜 기능만 계속 보류.
+```
 
 ## 11. 열린 질문 (Open Questions)
 
-- **Supabase 배터리 채택 범위** — DB는 확정(§6.3). Auth·Realtime·pg_cron을 어디까지 쓸지는 단계별로 결정.
-  (MVP: DB만 → 알림 단계: pg_cron/Webhook → 필요 시 Auth.) 표준 Postgres라 나중에 Neon/RDS 이전 비용 거의 0.
-- **수집기 하이브리드** — 조회는 Spring, 수집만 GitHub Actions로 뺄지는 운영해보고 판단. (지금 결정 불필요)
 - **호가 시세** — 실거래가만으로 부족하다고 느껴지면 그때 별도 검토. (스크래핑 리스크 재평가)
-- **국토부 API 키 발급** — ✅ 완료·검증(2026-06-25). 키 동작 확인, 응답 필드 §4.1대로 수신. 키는 환경변수 보관.
-- **지도 API 키** — 카카오 채택 시 JS 키·REST 키 발급 필요. (§8)
-- **단지 식별** — ✅ 해소: 응답에 `aptSeq` 존재(§4.1·§8). 1차 키로 사용. 남은 작업은 "단지 1개 ↔ aptSeq N개" 매핑 규칙 정도(난이도 대폭 하락).
+- **지도 API 키** — 카카오 채택 시 JS 키·REST 키 발급 필요. (§8 등록 흐름)
+- **프론트 프레임워크** — 정적 export(Next.js) vs Vite+React 등 미정. Supabase JS 클라이언트 + Google 로그인 붙는 쪽으로.
+- **백필 트리거** — 로컬 1회 실행 vs Actions `workflow_dispatch`. MVP는 로컬, 익숙해지면 Actions.
+- **나중에 Java 쿼리 API** — 분석이 SQL 뷰로 부족해지면 Render/Cloud Run에 Spring 얹는 카드(지금 불필요).
+
+### ✅ 해소된 질문 (이력)
+- **국토부 API 키** — 완료·검증(2026-06-25). 동작 확인, 응답 §4.1대로 수신. 환경변수 보관.
+- **단지 식별** — 응답에 `aptSeq` 존재. 1차 키로 확정. "단지1↔aptSeq N" 매핑만 남음.
+- **Supabase 배터리 범위** — Auth(Google)·RLS·Storage **채택 확정**. Realtime 후순위. (§6.3)
+- **백엔드 호스팅** — 상주 서버 안 둠으로 해소(서버리스 토폴로지). Fly/Railway 무료 폐지도 무관해짐.
 
 ## 12. 다음 할 일 (The Assignment)
 
