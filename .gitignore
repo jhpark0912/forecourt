@@ -1,2 +1,7 @@
 # Claude Code 로컬 설정 (머신별 개인 설정 — 공유 안 함)
 .claude/settings.local.json
+
+# 환경변수 (시크릿 — 절대 커밋 금지). 템플릿은 .env.example 참조
+.env
+.env.local
+.env.*.local
