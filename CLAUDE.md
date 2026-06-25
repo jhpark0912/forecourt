@@ -22,7 +22,8 @@ Spring Boot + JPA · DB Supabase(관리형 Postgres, JDBC·Flyway) · 호스팅 
 
 ## 함정 (Claude가 기본값으로 틀리는 것들)
 - **IMPORTANT: 호가 시세 스크래핑 금지.** 실거래가 API만 사용(약관 리스크).
-- **단지 매칭** — 국토부 응답엔 단지 ID가 없다. `법정동코드 1차 → 단지명 정규화 → 면적 구분` 순 식별(표기 변형: 차수·괄호).
+- **단지 매칭** — 응답에 단지 ID `aptSeq`(예 `11680-364`)가 **있다**(검증됨, 월 무관 고정). 1차 키로 `aptSeq` 사용, 단지명 정규화는 보조. 한 단지가 여러 seq일 수 있음(단지1↔aptSeqN). 상세 @DESIGN.md §4.1·§8.
+- **API 호출** — User-Agent 없으면 게이트웨이가 `Request Blocked` 400. Encoding 인증키 그대로. `numOfRows` 기본 10건 함정 → 크게+페이징. `dealAmount`는 `"550,000"` 만원·콤마 문자열, `excluUseAr`=전용면적(공급면적 없음).
 - **수집 단위** — 국토부 API는 시군구×월. 단지 직접 조회 불가 → 응답 필터링 필수.
 - **스케줄러** — 무료 백엔드는 idle 시 잠들어 `@Scheduled`가 안 돈다 → Supabase pg_cron/외부 cron으로 트리거(7일 일시정지 keep-alive 겸).
 - **시크릿** — serviceKey·DB 비번은 환경변수. `.env` 커밋 금지.
