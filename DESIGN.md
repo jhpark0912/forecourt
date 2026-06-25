@@ -45,6 +45,12 @@
   (거래일·평형·전용면적·층·거래금액). 변동추이·평단가정규화·신고가판정 전부 이 테이블에서 파생.
 - **데이터 양:** 단지당 월 수 건 수준 → 단지 수십 개 × 5년치라도 수만 행, 수십 MB. 가볍다.
 
+### 4.1 데이터 소스 참조 (국토부 실거래가 API)
+- 상세자료 엔드포인트: `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev`
+- 파라미터: `serviceKey`, `LAWD_CD`(시군구 5자리), `DEAL_YMD`(YYYYMM), `pageNo`, `numOfRows`
+- 조회 단위: **시군구 1곳 × 1개월** (단지 단위 조회 불가 → 응답을 단지명으로 필터링)
+- 키 발급: data.go.kr 활용신청(무료). 응답에 단지 고유 ID 없음(단지명+법정동+면적으로 식별).
+
 ## 5. 검토한 접근 (Approaches)
 
 ### Approach A — 로컬 단일 앱 (최소 실행 가능)
