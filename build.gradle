@@ -25,8 +25,10 @@ dependencies {
     // 로컬 .env 자동 주입(백필 실행 편의). CI(GitHub Actions)는 OS 환경변수를 직접 사용.
     implementation 'me.paulschwarz:spring-dotenv:4.0.0'
 
-    // ── 다음 단계(수집·DB)에서 추가 예정 ──
-    // implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml' // 국토부 XML 파싱
+    // 국토부 응답(XML) 파싱
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml'
+
+    // ── 다음 단계(DB 적재)에서 추가 예정 ──
     // implementation 'org.springframework.boot:spring-boot-starter-jdbc'        // Supabase JDBC
     // implementation 'org.flywaydb:flyway-core'                                 // 스키마 마이그레이션
     // implementation 'org.flywaydb:flyway-database-postgresql'
