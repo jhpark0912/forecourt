@@ -4,10 +4,11 @@
 > 전역 규칙(`~/.claude/CLAUDE.md`)은 그대로 적용. 여기엔 **이 프로젝트에서 Claude가 모르면 틀릴 것**만.
 > 설계·결정·데이터 소스 상세는 @DESIGN.md (단일 출처). 지금은 기획 단계 — 이 파일은 코드가 생기며 자란다.
 
-## 명령어  ⚠️ 코드 착수 시 **가장 먼저 채울 것** (최고 ROI)
-- 빌드: _TBD_
-- 단일 테스트: _TBD_
-- 로컬 실행: _TBD_
+## 명령어 (Gradle 래퍼 · JDK 17 · Spring Boot 배치)
+- 빌드: `./gradlew build`
+- 단일 테스트: `./gradlew test --tests ForecourtCollectorApplicationTests`
+- 로컬 실행: `./gradlew bootRun` 또는 `java -jar build/libs/forecourt-collector-0.0.1-SNAPSHOT.jar`
+- ⚠️ 실행 시 `MOLIT_SERVICE_KEY`(환경변수 또는 `.env`) 필요 — 미설정이면 수집기가 "없음" 경고.
 
 ## 스택 (서버리스 토폴로지 — 상주 서버 0개)
 **수집기** Java 배치 JAR(국토부 수집·aptSeq매칭·평단가정규화·지표계산) → **GitHub Actions cron**(무료·증분), 백필은 로컬/Actions 수동 1회 · **DB+Auth+Storage** Supabase(PostgREST 직접 읽기·RLS·Google OAuth) · **프론트** 정적 SPA(Vercel/Cloudflare Pages, Supabase 직접 접근, 폰 OK) · 데이터 국토부 실거래가 API(@DESIGN.md §4.1)

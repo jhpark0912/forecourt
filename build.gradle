@@ -1,0 +1,41 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.3.5'
+    id 'io.spring.dependency-management' version '1.1.6'
+}
+
+group = 'com.forecourt'
+version = '0.0.1-SNAPSHOT'
+description = 'Forecourt 국토부 실거래가 수집기 (배치 JAR — 상주 서버 아님)'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // 배치 토대 — 웹 서버 미포함(application.yml 에서 web-application-type=none)
+    implementation 'org.springframework.boot:spring-boot-starter'
+
+    // 로컬 .env 자동 주입(백필 실행 편의). CI(GitHub Actions)는 OS 환경변수를 직접 사용.
+    implementation 'me.paulschwarz:spring-dotenv:4.0.0'
+
+    // ── 다음 단계(수집·DB)에서 추가 예정 ──
+    // implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml' // 국토부 XML 파싱
+    // implementation 'org.springframework.boot:spring-boot-starter-jdbc'        // Supabase JDBC
+    // implementation 'org.flywaydb:flyway-core'                                 // 스키마 마이그레이션
+    // implementation 'org.flywaydb:flyway-database-postgresql'
+    // runtimeOnly    'org.postgresql:postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
