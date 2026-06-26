@@ -27,7 +27,9 @@
 - **IMPORTANT: 호가 시세 스크래핑 금지.** 실거래가 API만 사용(약관 리스크).
 - **단지 매칭** — 응답에 단지 ID `aptSeq`(예 `11680-364`)가 **있다**(검증됨, 월 무관 고정). 1차 키로 `aptSeq` 사용, 단지명 정규화는 보조. 한 단지가 여러 seq일 수 있음(단지1↔aptSeqN). 상세 @DESIGN.md §4.1·§8.
 - **API 호출** — User-Agent 없으면 게이트웨이가 `Request Blocked` 400. Encoding 인증키 그대로. `numOfRows` 기본 10건 함정 → 크게+페이징. `dealAmount`는 `"550,000"` 만원·콤마 문자열, `excluUseAr`=전용면적(공급면적 없음).
-- **수집 단위** — 국토부 API는 시군구×월. 단지 직접 조회 불가 → 응답 필터링 필수.
+- **수집 단위** — 국토부 API는 시군구×월(**구 단위 강제, 동 불가**). 단지 직접 조회 불가 → 응답 필터링 필수.
+- **적재** — row 단위 upsert **아님** → `(LAWD_CD, deal_ym)` **교체 적재**(트랜잭션 delete+insert). surrogate PK, 자연키 unique 없음, **중복 제거 안 함**(완전중복 실재), `cdealType` 해제거래는 지표서 제외. 상태는 `collection_job`. @DESIGN.md §4.2.
+- **조회 ≠ 수집** — 프론트→Supabase **읽기 전용**, 조회가 국토부를 부르지 않음. 미수집 지역은 **'받기 승인'(쓰기) → 백필 트리거**(자동: DB웹훅→Edge Function→`repository_dispatch`→Actions). **조회 트리거 금지.** @DESIGN.md §6.3·§7.
 - **스케줄러** — 상주 백엔드 없음 → `@Scheduled` 쓰지 말 것. 증분은 **GitHub Actions cron**이 JAR 실행. 매일 도는 적재가 Supabase 7일 일시정지 keep-alive 겸함.
 - **인증/보안** — 정적 프론트가 Supabase를 직접 접근(public anon 키 노출) → 사적 데이터(메모·사진·워치리스트)는 **RLS 필수**(`auth.uid()`). Google OAuth. 공용 거래데이터만 익명 읽기 허용.
 - **시크릿** — serviceKey·DB 비번은 환경변수. `.env` 커밋 금지.
